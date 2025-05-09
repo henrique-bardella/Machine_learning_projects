@@ -1,0 +1,788 @@
+# Modelo de Propensão para Adoção de CIELO
+# Autor: Claude
+# Data: 09/05/2025
+
+# 1. Importação das bibliotecas necessárias
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score, classification_report, confusion_matrix, roc_curve
+from sklearn.base import BaseEstimator, TransformerMixin
+import warnings
+warnings.filterwarnings('ignore')
+
+# Configuração para visualização
+plt.style.use('ggplot')
+sns.set(style='whitegrid')
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', 200)
+
+# 2. Carregamento dos dados
+# %%
+# Carregue o arquivo XLSX
+df = pd.read_excel('PROPENSAO.xlsx')
+
+# Verificar as primeiras linhas do dataframe
+print("Primeiras linhas do dataframe:")
+df.head()
+
+# %%
+# Informações sobre o dataframe
+print("\nInformações do dataframe:")
+df.info()
+
+# %%
+# Estatísticas descritivas
+print("\nEstatísticas descritivas:")
+df.describe().T
+
+# 3. Análise Exploratória de Dados (EDA)
+# %%
+# Verificar valores ausentes
+print("\nQuantidade de valores ausentes por coluna:")
+df.isnull().sum()
+
+# %%
+# Verificar a distribuição da variável target
+print("\nDistribuição da variável target (POSSUI_CIELO):")
+possui_cielo_counts = df['POSSUI_CIELO'].value_counts(normalize=True) * 100
+possui_cielo_counts_abs = df['POSSUI_CIELO'].value_counts()
+print(f"0 (Não possui): {possui_cielo_counts[0]:.2f}% ({possui_cielo_counts_abs[0]} registros)")
+print(f"1 (Possui): {possui_cielo_counts[1]:.2f}% ({possui_cielo_counts_abs[1]} registros)")
+
+plt.figure(figsize=(10, 6))
+sns.countplot(x='POSSUI_CIELO', data=df)
+plt.title('Distribuição da Variável Target (POSSUI_CIELO)')
+plt.xlabel('POSSUI_CIELO')
+plt.ylabel('Contagem')
+plt.xticks([0, 1], ['Não Possui (0)', 'Possui (1)'])
+plt.show()
+
+# %%
+# Distribuição por segmento
+print("\nDistribuição por segmento:")
+segmento_counts = df['SEGMENTO'].value_counts()
+print(segmento_counts)
+
+plt.figure(figsize=(10, 6))
+sns.countplot(x='SEGMENTO', data=df)
+plt.title('Distribuição por Segmento')
+plt.xlabel('Segmento')
+plt.ylabel('Contagem')
+plt.show()
+
+# %%
+# Distribuição por segmento e POSSUI_CIELO
+plt.figure(figsize=(12, 6))
+sns.countplot(x='SEGMENTO', hue='POSSUI_CIELO', data=df)
+plt.title('Distribuição por Segmento e POSSUI_CIELO')
+plt.xlabel('Segmento')
+plt.ylabel('Contagem')
+plt.legend(title='POSSUI_CIELO', labels=['Não Possui', 'Possui'])
+plt.show()
+
+# %%
+# Relação entre POSSUI_CIELO e RATING
+plt.figure(figsize=(12, 6))
+sns.countplot(x='RATING', hue='POSSUI_CIELO', data=df)
+plt.title('Distribuição por Rating e POSSUI_CIELO')
+plt.xlabel('Rating')
+plt.ylabel('Contagem')
+plt.legend(title='POSSUI_CIELO', labels=['Não Possui', 'Possui'])
+plt.show()
+
+# %%
+# Relação entre POSSUI_CIELO e GRAU_RESTRICAO
+plt.figure(figsize=(12, 6))
+sns.countplot(x='GRAU_RESTRICAO', hue='POSSUI_CIELO', data=df)
+plt.title('Distribuição por Grau de Restrição e POSSUI_CIELO')
+plt.xlabel('Grau de Restrição')
+plt.ylabel('Contagem')
+plt.legend(title='POSSUI_CIELO', labels=['Não Possui', 'Possui'])
+plt.show()
+
+# 4. Análise de Outliers em ROB e FATURAMENTO
+# %%
+# Boxplot para identificar outliers no FATURAMENTO
+plt.figure(figsize=(12, 6))
+sns.boxplot(x='SEGMENTO', y='FATURAMENTO', data=df)
+plt.title('Boxplot de FATURAMENTO por Segmento')
+plt.ylabel('FATURAMENTO')
+plt.xlabel('Segmento')
+plt.yscale('log')  # Escala logarítmica para melhor visualização
+plt.show()
+
+# %%
+# Boxplot para identificar outliers no ROB
+plt.figure(figsize=(12, 6))
+sns.boxplot(x='SEGMENTO', y='ROB', data=df)
+plt.title('Boxplot de ROB por Segmento')
+plt.ylabel('ROB')
+plt.xlabel('Segmento')
+plt.yscale('log')  # Escala logarítmica para melhor visualização
+plt.show()
+
+# %%
+# Detecção de outliers utilizando o método do IQR (Interquartile Range)
+def detectar_remover_outliers(df, coluna, multiplicador=1.5):
+    Q1 = df[coluna].quantile(0.25)
+    Q3 = df[coluna].quantile(0.75)
+    IQR = Q3 - Q1
+    
+    limite_inferior = Q1 - multiplicador * IQR
+    limite_superior = Q3 + multiplicador * IQR
+    
+    print(f"Análise de outliers para {coluna}:")
+    print(f"Q1: {Q1}")
+    print(f"Q3: {Q3}")
+    print(f"IQR: {IQR}")
+    print(f"Limite inferior: {limite_inferior}")
+    print(f"Limite superior: {limite_superior}")
+    
+    # Identificar outliers
+    outliers = df[(df[coluna] < limite_inferior) | (df[coluna] > limite_superior)]
+    print(f"Número de outliers: {len(outliers)}")
+    
+    if len(outliers) > 0:
+        print("Outliers identificados:")
+        print(outliers[[coluna, 'SEGMENTO', 'POSSUI_CIELO']])
+    
+    # Remover outliers
+    df_sem_outliers = df[(df[coluna] >= limite_inferior) & (df[coluna] <= limite_superior)]
+    print(f"Tamanho do dataframe original: {len(df)}")
+    print(f"Tamanho do dataframe sem outliers: {len(df_sem_outliers)}")
+    
+    return df_sem_outliers, outliers
+
+# Detectar e remover outliers para cada segmento separadamente
+def detectar_outliers_por_segmento(df, coluna):
+    df_sem_outliers = pd.DataFrame()
+    outliers_totais = pd.DataFrame()
+    
+    for segmento in df['SEGMENTO'].unique():
+        print(f"\n--- Análise para segmento: {segmento} ---")
+        df_segmento = df[df['SEGMENTO'] == segmento]
+        
+        # Só aplicamos a detecção de outliers se tivermos mais de 5 registros
+        if len(df_segmento) > 5:
+            df_segmento_sem_outliers, outliers = detectar_remover_outliers(df_segmento, coluna)
+            df_sem_outliers = pd.concat([df_sem_outliers, df_segmento_sem_outliers])
+            outliers_totais = pd.concat([outliers_totais, outliers])
+        else:
+            print(f"Poucos registros para o segmento {segmento} ({len(df_segmento)}). Mantendo todos.")
+            df_sem_outliers = pd.concat([df_sem_outliers, df_segmento])
+    
+    print(f"\nTotal de outliers removidos: {len(outliers_totais)}")
+    return df_sem_outliers, outliers_totais
+
+# %%
+# Aplicar detecção de outliers em FATURAMENTO
+print("Detecção de outliers em FATURAMENTO:")
+df_sem_outliers_faturamento, outliers_faturamento = detectar_outliers_por_segmento(df, 'FATURAMENTO')
+
+# %%
+# Aplicar detecção de outliers em ROB
+print("\nDetecção de outliers em ROB:")
+df_sem_outliers_rob, outliers_rob = detectar_outliers_por_segmento(df_sem_outliers_faturamento, 'ROB')
+
+# %%
+# Dataframe final sem outliers
+df_final = df_sem_outliers_rob.copy()
+print(f"\nTamanho do dataframe original: {len(df)}")
+print(f"Tamanho do dataframe final sem outliers: {len(df_final)}")
+
+# Verificar novamente a distribuição da variável target após remoção de outliers
+print("\nDistribuição da variável target após remoção de outliers:")
+target_counts = df_final['POSSUI_CIELO'].value_counts(normalize=True) * 100
+target_counts_abs = df_final['POSSUI_CIELO'].value_counts()
+print(f"0 (Não possui): {target_counts.get(0, 0):.2f}% ({target_counts_abs.get(0, 0)} registros)")
+print(f"1 (Possui): {target_counts.get(1, 0):.2f}% ({target_counts_abs.get(1, 0)} registros)")
+
+# 5. Engenharia de Recursos (Feature Engineering)
+# %%
+# Criar novas features que podem ser úteis para o modelo
+df_final['ROB_POR_FATURAMENTO'] = df_final['ROB'] / df_final['FATURAMENTO']
+df_final['ROB_POR_FATURAMENTO'].fillna(0, inplace=True)  # Substituir NaN por 0 para casos onde FATURAMENTO é zero
+
+# Logaritmo de FATURAMENTO e ROB (adicionando 1 para evitar log(0))
+df_final['LOG_FATURAMENTO'] = np.log1p(df_final['FATURAMENTO'])
+df_final['LOG_ROB'] = np.log1p(df_final['ROB'])
+
+# Categorização de RATING (convertendo para valor numérico)
+rating_map = {'A': 5, 'B': 4, 'C': 3, 'D': 2, 'E': 1}
+df_final['RATING_NUM'] = df_final['RATING'].map(rating_map)
+
+# Criar variáveis para indicar se a empresa possui outros produtos
+df_final['TEM_OUTROS_PRODUTOS'] = ((df_final['POSSUI_PIX'] == 1) | (df_final['POSSUI_ALELO'] == 1)).astype(int)
+df_final['QTD_PRODUTOS'] = df_final['POSSUI_PIX'] + df_final['POSSUI_ALELO']
+
+# Normalizar anos de relacionamento pelo tempo de fundação
+df_final['PROPORCAO_RELACIONAMENTO'] = df_final['ANOS_RELACIONAMENTO'] / df_final['ANOS_FUNDACAO']
+df_final['PROPORCAO_RELACIONAMENTO'].fillna(1, inplace=True)  # Substituir NaN por 1 para casos onde ANOS_FUNDACAO é zero
+
+# %%
+# Verificar as novas features
+print("Features após engenharia de recursos:")
+df_final.head()
+
+# %%
+# Matriz de correlação
+colunas_numericas = [
+    'ANOS_FUNDACAO', 'ANOS_RELACIONAMENTO', 'FATURAMENTO', 'ROB', 
+    'RATING_NUM', 'GRAU_RESTRICAO', 'ROB_POR_FATURAMENTO', 
+    'LOG_FATURAMENTO', 'LOG_ROB', 'QTD_PRODUTOS', 'PROPORCAO_RELACIONAMENTO',
+    'POSSUI_CIELO'
+]
+
+plt.figure(figsize=(14, 10))
+correlation_matrix = df_final[colunas_numericas].corr()
+mask = np.triu(np.ones_like(correlation_matrix, dtype=bool))
+sns.heatmap(correlation_matrix, mask=mask, annot=True, cmap='coolwarm', fmt='.2f', 
+            linewidths=0.5, vmin=-1, vmax=1)
+plt.title('Matriz de Correlação')
+plt.tight_layout()
+plt.show()
+
+# 6. Preparação dos Dados para Modelagem
+# %%
+# Selecionar features para o modelo
+features = [
+    'SEGMENTO', 'COD_CNAE', 'RATING', 'GRAU_RESTRICAO', 
+    'ANOS_FUNDACAO', 'ANOS_RELACIONAMENTO', 'UF', 'FATURAMENTO', 'ROB',
+    'POSSUI_PIX', 'POSSUI_ALELO', 'ROB_POR_FATURAMENTO', 
+    'LOG_FATURAMENTO', 'LOG_ROB', 'RATING_NUM', 'TEM_OUTROS_PRODUTOS',
+    'QTD_PRODUTOS', 'PROPORCAO_RELACIONAMENTO'
+]
+
+X = df_final[features]
+y = df_final['POSSUI_CIELO']
+
+# %%
+# Dividir os dados em conjuntos de treino e teste
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.3, random_state=42, stratify=y
+)
+
+print(f"Tamanho do conjunto de treino: {X_train.shape[0]} registros")
+print(f"Tamanho do conjunto de teste: {X_test.shape[0]} registros")
+
+# %%
+# Definir as colunas categóricas e numéricas
+colunas_categoricas = ['SEGMENTO', 'RATING', 'UF', 'COD_CNAE']
+colunas_numericas = [col for col in features if col not in colunas_categoricas]
+
+# Criação de preprocessadores para cada tipo de dado
+preprocessador_numerico = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='median')),
+    ('scaler', StandardScaler())
+])
+
+preprocessador_categorico = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='most_frequent')),
+    ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+])
+
+# Preprocessador completo usando ColumnTransformer
+preprocessador = ColumnTransformer(
+    transformers=[
+        ('num', preprocessador_numerico, colunas_numericas),
+        ('cat', preprocessador_categorico, colunas_categoricas)
+    ]
+)
+
+# 7. Modelagem por Segmento
+# %%
+# Função para modelagem por segmento
+def modelar_por_segmento(df, features, target='POSSUI_CIELO'):
+    segmentos = df['SEGMENTO'].unique()
+    resultados = {}
+    
+    for segmento in segmentos:
+        print(f"\n{'='*50}")
+        print(f"Modelagem para o segmento: {segmento}")
+        print(f"{'='*50}")
+        
+        # Filtrar dados para o segmento atual
+        df_segmento = df[df['SEGMENTO'] == segmento].copy()
+        
+        # Verificar quantidade de dados
+        print(f"Total de registros: {len(df_segmento)}")
+        
+        # Verificar distribuição da variável target
+        target_counts = df_segmento[target].value_counts()
+        print(f"Distribuição da variável target ({target}):")
+        for valor, contagem in target_counts.items():
+            print(f"  {valor}: {contagem} registros ({contagem/len(df_segmento)*100:.2f}%)")
+        
+        # Separar features e target
+        X_seg = df_segmento[features]
+        y_seg = df_segmento[target]
+        
+        # Verificar se há dados suficientes para modelagem
+        if len(df_segmento) < 10 or target_counts.min() < 2:
+            print(f"Dados insuficientes para modelagem do segmento {segmento}. Pulando...")
+            resultados[segmento] = {
+                'modelo': None,
+                'auc': None,
+                'importancia_features': None,
+                'relatorio': None
+            }
+            continue
+        
+        try:
+            # Dividir em treino e teste
+            X_train, X_test, y_train, y_test = train_test_split(
+                X_seg, y_seg, test_size=0.3, random_state=42, stratify=y_seg
+            )
+            
+            # Remover a coluna SEGMENTO das features para evitar overfitting
+            colunas_para_modelagem = [col for col in features if col != 'SEGMENTO']
+            X_train = X_train[colunas_para_modelagem]
+            X_test = X_test[colunas_para_modelagem]
+            
+            # Atualizar listas de colunas categóricas e numéricas
+            colunas_categoricas_seg = [col for col in colunas_categoricas if col != 'SEGMENTO' and col in X_train.columns]
+            colunas_numericas_seg = [col for col in X_train.columns if col not in colunas_categoricas_seg]
+            
+            # Pré-processador para o segmento
+            preprocessador_seg = ColumnTransformer(
+                transformers=[
+                    ('num', preprocessador_numerico, colunas_numericas_seg),
+                    ('cat', preprocessador_categorico, colunas_categoricas_seg)
+                ]
+            )
+            
+            # Definir pipeline com modelo RandomForest
+            pipeline = Pipeline([
+                ('preprocessador', preprocessador_seg),
+                ('modelo', RandomForestClassifier(random_state=42))
+            ])
+            
+            # Parâmetros para GridSearch
+            parametros = {
+                'modelo__n_estimators': [50, 100],
+                'modelo__max_depth': [None, 5, 10],
+                'modelo__min_samples_split': [2, 5],
+                'modelo__min_samples_leaf': [1, 2]
+            }
+            
+            # Cross-validation estratificado
+            cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+            
+            # Grid search
+            grid_search = GridSearchCV(
+                pipeline, parametros, cv=cv, scoring='roc_auc',
+                n_jobs=-1, verbose=1
+            )
+            
+            # Treinar modelo
+            grid_search.fit(X_train, y_train)
+            
+            # Melhor modelo
+            melhor_modelo = grid_search.best_estimator_
+            
+            # Avaliar no conjunto de teste
+            y_pred_proba = melhor_modelo.predict_proba(X_test)[:, 1]
+            y_pred = melhor_modelo.predict(X_test)
+            
+            # Métricas
+            auc = roc_auc_score(y_test, y_pred_proba)
+            relatorio = classification_report(y_test, y_pred)
+            
+            print(f"\nMelhores parâmetros: {grid_search.best_params_}")
+            print(f"AUC no conjunto de teste: {auc:.4f}")
+            print("\nRelatório de classificação:")
+            print(relatorio)
+            
+            # Curva ROC
+            fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+            plt.figure(figsize=(8, 6))
+            plt.plot(fpr, tpr, label=f'AUC = {auc:.4f}')
+            plt.plot([0, 1], [0, 1], 'k--')
+            plt.xlabel('Taxa de Falsos Positivos')
+            plt.ylabel('Taxa de Verdadeiros Positivos')
+            plt.title(f'Curva ROC - Segmento {segmento}')
+            plt.legend()
+            plt.show()
+            
+            # Matriz de confusão
+            cm = confusion_matrix(y_test, y_pred)
+            plt.figure(figsize=(8, 6))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+            plt.xlabel('Predito')
+            plt.ylabel('Real')
+            plt.title(f'Matriz de Confusão - Segmento {segmento}')
+            plt.show()
+            
+            # Importância das features
+            if hasattr(melhor_modelo[-1], 'feature_importances_'):
+                importancias = melhor_modelo[-1].feature_importances_
+                
+                # Obter os nomes das features após transformação
+                feature_names = []
+                
+                # Para colunas numéricas, nomes permanecem os mesmos
+                feature_names.extend(colunas_numericas_seg)
+                
+                # Para colunas categóricas, precisamos obter os nomes após one-hot encoding
+                encoder = melhor_modelo.named_steps['preprocessador'].transformers_[1][1].named_steps['onehot']
+                categorias = encoder.get_feature_names_out(colunas_categoricas_seg)
+                feature_names.extend(categorias)
+                
+                # Criar DataFrame de importância das features
+                df_importancias = pd.DataFrame({
+                    'Feature': feature_names,
+                    'Importância': importancias
+                })
+                
+                # Ordenar pelo valor de importância
+                df_importancias = df_importancias.sort_values('Importância', ascending=False)
+                
+                # Plotar importância das features
+                plt.figure(figsize=(10, 6))
+                sns.barplot(x='Importância', y='Feature', data=df_importancias.head(15))
+                plt.title(f'Importância das Features - Segmento {segmento}')
+                plt.tight_layout()
+                plt.show()
+                
+                # Exibir importância das features
+                print("\nImportância das Features:")
+                print(df_importancias.head(15))
+                
+                resultados[segmento] = {
+                    'modelo': melhor_modelo,
+                    'auc': auc,
+                    'importancia_features': df_importancias,
+                    'relatorio': relatorio
+                }
+            else:
+                print("Modelo não possui atributo 'feature_importances_'")
+                resultados[segmento] = {
+                    'modelo': melhor_modelo,
+                    'auc': auc,
+                    'importancia_features': None,
+                    'relatorio': relatorio
+                }
+                
+        except Exception as e:
+            print(f"Erro na modelagem do segmento {segmento}: {str(e)}")
+            resultados[segmento] = {
+                'modelo': None,
+                'auc': None,
+                'importancia_features': None,
+                'relatorio': None,
+                'erro': str(e)
+            }
+    
+    return resultados
+
+# %%
+# Aplicar modelagem por segmento
+features_para_modelo = [
+    'SEGMENTO', 'RATING', 'GRAU_RESTRICAO', 
+    'ANOS_FUNDACAO', 'ANOS_RELACIONAMENTO', 'UF', 
+    'LOG_FATURAMENTO', 'LOG_ROB', 'RATING_NUM', 
+    'POSSUI_PIX', 'POSSUI_ALELO', 'TEM_OUTROS_PRODUTOS',
+    'QTD_PRODUTOS', 'PROPORCAO_RELACIONAMENTO'
+]
+
+resultados_por_segmento = modelar_por_segmento(df_final, features_para_modelo)
+
+# 8. Modelo Geral (para todos os segmentos)
+# %%
+# Criar modelo para todos os segmentos combinados
+print("\n\n" + "="*50)
+print("Modelagem Geral (Todos os Segmentos)")
+print("="*50)
+
+X = df_final[features_para_modelo]
+y = df_final['POSSUI_CIELO']
+
+# Dividir em treino e teste
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.3, random_state=42, stratify=y
+)
+
+# Atualizar listas de colunas categóricas e numéricas
+colunas_categoricas_geral = [col for col in colunas_categoricas if col in X_train.columns]
+colunas_numericas_geral = [col for col in X_train.columns if col not in colunas_categoricas_geral]
+
+# Pré-processador para o modelo geral
+preprocessador_geral = ColumnTransformer(
+    transformers=[
+        ('num', preprocessador_numerico, colunas_numericas_geral),
+        ('cat', preprocessador_categorico, colunas_categoricas_geral)
+    ]
+)
+
+# Definir pipeline com diferentes modelos
+modelos = {
+    'RandomForest': RandomForestClassifier(random_state=42),
+    'GradientBoosting': GradientBoostingClassifier(random_state=42),
+    'LogisticRegression': LogisticRegression(max_iter=1000, random_state=42)
+}
+
+resultados_modelos = {}
+
+for nome_modelo, modelo in modelos.items():
+    print(f"\n{'-'*30}")
+    print(f"Treinando modelo: {nome_modelo}")
+    print(f"{'-'*30}")
+    
+    # Criar pipeline
+    pipeline = Pipeline([
+        ('preprocessador', preprocessador_geral),
+        ('modelo', modelo)
+    ])
+    
+    # Treinar modelo
+    pipeline.fit(X_train, y_train)
+    
+    # Avaliar no conjunto de teste
+    y_pred_proba = pipeline.predict_proba(X_test)[:, 1]
+    y_pred = pipeline.predict(X_test)
+    
+    # Métricas
+    auc = roc_auc_score(y_test, y_pred_proba)
+    relatorio = classification_report(y_test, y_pred)
+    
+    print(f"AUC no conjunto de teste: {auc:.4f}")
+    print("\nRelatório de classificação:")
+    print(relatorio)
+    
+    # Curva ROC
+    fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+    plt.figure(figsize=(8, 6))
+    plt.plot(fpr, tpr, label=f'AUC = {auc:.4f}')
+    plt.plot([0, 1], [0, 1], 'k--')
+    plt.xlabel('Taxa de Falsos Positivos')
+    plt.ylabel('Taxa de Verdadeiros Positivos')
+    plt.title(f'Curva ROC - {nome_modelo}')
+    plt.legend()
+    plt.show()
+    
+    # Matriz de confusão
+    cm = confusion_matrix(y_test, y_pred)
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+    plt.xlabel('Predito')
+    plt.ylabel('Real')
+    plt.title(f'Matriz de Confusão - {nome_modelo}')
+    plt.show()
+    
+    # Armazenar resultados
+    resultados_modelos[nome_modelo] = {
+        'modelo': pipeline,
+        'auc': auc,
+        'relatorio': relatorio
+    }
+    
+    # Importância das features para modelos que suportam
+    if hasattr(modelo, 'feature_importances_'):
+        try:
+            # Obter nomes das features após transformação
+            feature_names = []
+            
+            # Para colunas numéricas, nomes permanecem os mesmos
+            feature_names.extend(colunas_numericas_geral)
+            
+            # Para colunas categóricas, precisamos obter os nomes após one-hot encoding
+            encoder = pipeline.named_steps['preprocessador'].transformers_[1][1].named_steps['onehot']
+            categorias = encoder.get_feature_names_out(colunas_categoricas_geral)
+            feature_names.extend(categorias)
+            
+            # Obter importância das features
+            importancias = pipeline.named_steps['modelo'].feature_importances_
+            
+            # Criar DataFrame de importância das features
+            df_importancias = pd.DataFrame({
+                'Feature': feature_names,
+                'Importância': importancias
+            }).sort_values('Importância', ascending=False)
+            
+            # Plotar importância das features
+            plt.figure(figsize=(12, 8))
+            sns.barplot(x='Importância', y='Feature', data=df_importancias.head(15))
+            plt.title(f'Importância das Features - {nome_modelo}')
+            plt.tight_layout()
+            plt.show()
+            
+            # Exibir importância das features
+            print("\nImportância das Features:")
+            print(df_importancias.head(15))
+            
+            resultados_modelos[nome_modelo]['importancia_features'] = df_importancias
+        except Exception as e:
+            print(f"Erro ao calcular importância das features: {str(e)}")
+    elif hasattr(modelo, 'coef_'):
+        try:
+            # Obter nomes das features após transformação
+            feature_names = []
+            
+            # Para colunas numéricas, nomes permanecem os mesmos
+            feature_names.extend(colunas_numericas_geral)
+            
+            # Para colunas categóricas, precisamos obter os nomes após one-hot encoding
+            encoder = pipeline.named_steps['preprocessador'].transformers_[1][1].named_steps['onehot']
+            categorias = encoder.get_feature_names_out(colunas_categoricas_geral)
+            feature_names.extend(categorias)
+            
+            # Obter coeficientes
+            coeficientes = pipeline.named_steps['modelo'].coef_[0]
+            
+            # Criar DataFrame de importância das features
+            df_coeficientes = pd.DataFrame({
+                'Feature': feature_names,
+                'Coeficiente': coeficientes
+            }).sort_values('Coeficiente', ascending=False)
+            
+            # Plotar coeficientes
+            plt.figure(figsize=(12, 8))
+            sns.barplot(x='Coeficiente', y='Feature', data=df_coeficientes.head(15))
+            plt.title(f'Coeficientes - {nome_modelo}')
+            plt.tight_layout()
+            plt.show()
+            
+            # Exibir coeficientes
+            print("\nCoeficientes:")
+            print(df_coeficientes.head(15))
+            
+            resultados_modelos[nome_modelo]['coeficientes'] = df_coeficientes
+        except Exception as e:
+            print(f"Erro ao calcular coeficientes: {str(e)}")
+
+# 9. Função para Calcular Propensão
+# %%
+def calcular_propensao(df, modelo, preprocessador=None):
+    """
+    Calcula a propensão para cada registro no dataframe.
+    
+    Args:
+        df: DataFrame com os dados
+        modelo: Modelo treinado
+        preprocessador: Preprocessador (opcional)
+    
+    Returns:
+        DataFrame com propensão calculada
+    """
+    # Copiar dataframe para não alterar o original
+    df_propensao = df.copy()
+    
+    # Se modelo for um pipeline que já inclui preprocessador
+    if hasattr(modelo, 'predict_proba') and preprocessador is None:
+        propensao = modelo.predict_proba(df_propensao)[:, 1]
+    # Se modelo e preprocessador forem fornecidos separadamente
+    elif preprocessador is not None:
+        # Preprocessar dados
+        X_processado = preprocessador.transform(df_propensao)
+        # Calcular propensão
+        propensao = modelo.predict_proba(X_processado)[:, 1]
+    else:
+        raise ValueError("É necessário fornecer um modelo pipeline ou modelo + preprocessador")
+    
+    # Adicionar propensão ao dataframe
+    df_propensao['PROPENSAO'] = propensao
+    
+    # Classificar por propensão (decrescente)
+    df_propensao = df_propensao.sort_values('PROPENSAO', ascending=False)
+    
+    return df_propensao
+
+# %%
+# Determinar o melhor modelo geral
+melhor_modelo_geral = None
+melhor_auc = 0
+
+for nome_modelo, resultados in resultados_modelos.items():
+    if resultados['auc'] > melhor_auc:
+        melhor_auc = resultados['auc']
+        melhor_modelo_geral = resultados['modelo']
+
+print(f"Melhor modelo geral: {melhor_modelo_geral}")
+print(f"AUC do melhor modelo: {melhor_auc:.4f}")
+
+# %%
+# Calcular propensão para todos os registros usando o melhor modelo geral
+df_propensao = calcular_propensao(df_final, melhor_modelo_geral)
+
+# Exibir os primeiros registros com propensão calculada
+print("Registros com propensão calculada (ordenados por propensão):")
+print(df_propensao[['SEGMENTO', 'POSSUI_CIELO', 'PROPENSAO']].head(10))
+
+# %%
+# Calcular propensão por segmento
+propensao_por_segmento = {}
+
+for segmento, resultados in resultados_por_segmento.items():
+    if resultados['modelo'] is not None:
+        # Filtrar dados para o segmento
+        df_segmento = df_final[df_final['SEGMENTO'] == segmento].copy()
+        
+        # Calcular propensão
+        df_propensao_segmento = calcular_propensao(df_segmento, resultados['modelo'])
+        
+        # Armazenar resultado
+        propensao_por_segmento[segmento] = df_propensao_segmento
+        
+        # Exibir os primeiros registros com propensão calculada
+        print(f"\nPropensão para segmento {segmento}:")
+        print(df_propensao_segmento[['POSSUI_CIELO', 'PROPENSAO']].head(5))
+
+# 10. Salvar Resultados
+# %%
+# Salvar propensão calculada
+df_propensao.to_excel('propensao_geral_calculada.xlsx', index=False)
+
+for segmento, df_prop in propensao_por_segmento.items():
+    df_prop.to_excel(f'propensao_{segmento.lower()}_calculada.xlsx', index=False)
+
+# 11. Resumo e Conclusões
+# %%
+# Resumo dos resultados
+print("\n" + "="*50)
+print("RESUMO DOS RESULTADOS")
+print("="*50)
+
+print("\nModelo Geral:")
+for nome_modelo, resultados in resultados_modelos.items():
+    print(f"- {nome_modelo}: AUC = {resultados['auc']:.4f}")
+
+print("\nModelos por Segmento:")
+for segmento, resultados in resultados_por_segmento.items():
+    if resultados['auc'] is not None:
+        print(f"- {segmento}: AUC = {resultados['auc']:.4f}")
+    else:
+        print(f"- {segmento}: Não foi possível treinar um modelo")
+
+print("\nConclusões:")
+print("1. O modelo geral teve um desempenho de AUC = {:.4f}".format(melhor_auc))
+print("2. As features mais importantes para a propensão foram:")
+try:
+    for nome_modelo, resultados in resultados_modelos.items():
+        if 'importancia_features' in resultados:
+            top_features = resultados['importancia_features'].head(5)['Feature'].tolist()
+            print(f"   - {nome_modelo}: {', '.join(top_features)}")
+        elif 'coeficientes' in resultados:
+            top_features = resultados['coeficientes'].head(5)['Feature'].tolist()
+            print(f"   - {nome_modelo}: {', '.join(top_features)}")
+except:
+    print("   Não foi possível determinar as features mais importantes")
+
+print("3. Recomendações para uso do modelo:")
+print("   - O modelo pode ser usado para priorizar empresas com maior propensão a adquirir o produto CIELO")
+print("   - Segmentar as campanhas de marketing por tipo de empresa (MEI, PJ, EMPRESA)")
+print("   - Focar em empresas com características similares às que já possuem o produto")
+print("   - Monitorar o desempenho do modelo ao longo do tempo e atualizar conforme necessário")
+
+print("\nObservações:")
+print("- O conjunto de dados utilizado é pequeno, o que pode limitar a generalização dos resultados")
+print("- É recomendável coletar mais dados para melhorar a performance do modelo")
+print("- A modelagem por segmento pode ser mais eficaz com um volume maior de dados")
